@@ -1,6 +1,6 @@
 # Coinage TypeScript Backend
 
-Stateless Bun service that surfaces SnapTrade crypto trading endpoints for the Java/Spring backend. All requests are authenticated upstream; this service simply validates payloads, sends them to SnapTrade, and relays the results (including `X-Request-ID`) back to callers.
+Stateless Bun service that surfaces SnapTrade crypto trading endpoints for the Java/Spring backend. All requests are authenticated upstream; this service simply validates payloads, sends them to SnapTrade, and relays the results (including `X-SnapTrade-Request-ID`, mirroring SnapTrade’s `X-Request-ID`) back to callers.
 
 ## Prerequisites
 
@@ -54,7 +54,7 @@ All routes expect `accountId`, `userId`, and `userSecret`.
 | `POST` | `/crypto/preview`   | Mirrors SnapTrade `previewCryptoOrder`                               |
 | `POST` | `/crypto/place`     | Mirrors SnapTrade `placeCryptoOrder`; rate limited to 1/sec/account  |
 
-Successful responses include the brokerage payload returned by SnapTrade. For errors we surface the SnapTrade status, payload, and propagate `X-SnapTrade-Request-ID` when available. Order placement is throttled to one request per account per second, returning HTTP `429` when exceeded.
+Successful responses include the brokerage payload returned by SnapTrade. For errors we surface the SnapTrade status, payload, and propagate `X-SnapTrade-Request-ID` when available. Order placement is throttled to one request per account per second, returning HTTP `429` when exceeded. We also propagate SnapTrade ratelimit headers (`X-SnapTrade-RateLimit-Limit`, `X-SnapTrade-RateLimit-Remaining`, `X-SnapTrade-RateLimit-Reset`) for observability.
 
 ## Deployment Notes
 

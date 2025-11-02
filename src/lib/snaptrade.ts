@@ -14,3 +14,11 @@ export const snaptrade = new Snaptrade({
 // Uncomment if Bun ever requires a fetch-based adapter for Axios:
 // const { default: fetchAdapter } = await import("@shiroyasha9/axios-fetch-adapter");
 // snaptrade.axios.defaults.adapter = fetchAdapter;
+
+// Sensible network defaults: fail fast instead of hanging forever.
+// (Axios default is no timeout.)
+try {
+  // Ten seconds matches our Spring service timeouts and keeps Bun from waiting
+  // indefinitely if SnapTrade has a transient networking blip.
+  snaptrade.axios.defaults.timeout = 10_000; // 10s
+} catch {}

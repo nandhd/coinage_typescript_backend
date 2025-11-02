@@ -3,14 +3,18 @@
   "module": "./src/server.ts",
   "type": "module",
   "private": true,
+  "engines": {
+    "bun": ">=1.1.0"
+  },
   "scripts": {
     "dev": "bun run --watch src/server.ts",
     "start": "bun run src/server.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "hono": "latest",
-    "snaptrade-typescript-sdk": "latest",
+    "snaptrade-typescript-sdk": "^9.0.146",
     "zod": "latest"
   },
   "devDependencies": {

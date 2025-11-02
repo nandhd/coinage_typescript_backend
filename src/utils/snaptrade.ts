@@ -8,12 +8,13 @@ import type { ZodError } from "zod";
  */
 export function unwrapSnaptradeResponse<T>(
   result: PossibleResponse<T>
-): { data: T; requestId?: string } {
+): { data: T; requestId?: string; headers?: HeadersLike } {
   if (result && typeof result === "object" && "data" in result) {
     const maybeHeaders = (result as { headers?: HeadersLike }).headers;
     return {
       data: (result as { data: T }).data,
-      requestId: extractRequestId(maybeHeaders)
+      requestId: extractRequestId(maybeHeaders),
+      headers: maybeHeaders
     };
   }
 
@@ -49,10 +50,27 @@ export function handleSnaptradeError(c: Context, error: unknown) {
       c.header("X-SnapTrade-Request-ID", String(requestId));
     }
 
+    const rateLimit = pickRateLimitHeaders(error.response?.headers);
+    if (rateLimit.limit) {
+      c.header("X-SnapTrade-RateLimit-Limit", rateLimit.limit);
+    }
+    if (rateLimit.remaining) {
+      c.header("X-SnapTrade-RateLimit-Remaining", rateLimit.remaining);
+    }
+    if (rateLimit.reset) {
+      c.header("X-SnapTrade-RateLimit-Reset", rateLimit.reset);
+    }
+    const retryAfter = readHeaderValue(error.response?.headers, "retry-after");
+    if (retryAfter) {
+      c.header("Retry-After", String(retryAfter));
+    }
+
     return c.json(
       {
         error: "snaptrade_error",
-        message: error.response?.data ?? error.message,
+        message:
+          typeof error.response?.data === "string" ? error.response?.data : error.message,
+        details: typeof error.response?.data === "object" ? error.response?.data : undefined,
         status
       },
       status
@@ -74,11 +92,19 @@ export function handleSnaptradeError(c: Context, error: unknown) {
  * the SDK (fetch adapter, Axios adapter, plain objects).
  */
 export function extractRequestId(headers: HeadersLike | undefined): string | undefined {
-  return (
-    readHeaderValue(headers, "x-request-id") ??
-    readHeaderValue(headers, "X-Request-Id") ??
-    undefined
-  );
+  return readHeaderValue(headers, "x-request-id") ?? undefined;
+}
+
+export function pickRateLimitHeaders(
+  headers: HeadersLike | undefined
+): { limit?: string; remaining?: string; reset?: string } {
+  // SnapTrade includes the partner-level rate limit counters in standard
+  // headers. Surface them so callers can observe their remaining budget.
+  return {
+    limit: readHeaderValue(headers, "x-ratelimit-limit"),
+    remaining: readHeaderValue(headers, "x-ratelimit-remaining"),
+    reset: readHeaderValue(headers, "x-ratelimit-reset")
+  };
 }
 
 /**
@@ -136,6 +162,29 @@ export function readHeaderValue(headers: unknown, headerName: string): string | 
   }
 
   return undefined;
+}
+
+/**
+ * Forward useful SnapTrade response metadata to our caller.
+ */
+export function propagateRateLimitHeaders(c: Context, headers?: HeadersLike) {
+  if (!headers) {
+    return;
+  }
+
+  const limit = readHeaderValue(headers, "x-ratelimit-limit");
+  const remaining = readHeaderValue(headers, "x-ratelimit-remaining");
+  const reset = readHeaderValue(headers, "x-ratelimit-reset");
+
+  if (limit) {
+    c.header("X-SnapTrade-RateLimit-Limit", String(limit));
+  }
+  if (remaining) {
+    c.header("X-SnapTrade-RateLimit-Remaining", String(remaining));
+  }
+  if (reset) {
+    c.header("X-SnapTrade-RateLimit-Reset", String(reset));
+  }
 }
 
 type PossibleResponse<T> =

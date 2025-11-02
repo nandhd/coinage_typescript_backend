@@ -4,7 +4,12 @@ import { ZodError, type ZodType } from "zod";
 import { snaptrade } from "../lib/snaptrade";
 import { PerKeyRateLimiter } from "../lib/rateLimiter";
 import { OrderPayload, PairQuery, QuoteQuery, orderSchema, pairQuerySchema, quoteQuerySchema } from "../schemas/crypto";
-import { handleSnaptradeError, unwrapSnaptradeResponse, validationError } from "../utils/snaptrade";
+import {
+  handleSnaptradeError,
+  unwrapSnaptradeResponse,
+  validationError,
+  propagateRateLimitHeaders
+} from "../utils/snaptrade";
 
 // Enforce one trade per second per account to align with SnapTrade guidance.
 const tradingLimiter = new PerKeyRateLimiter(1_000);
@@ -31,8 +36,10 @@ export function registerCryptoRoutes(app: Hono) {
         quote: params.quote
       });
 
-      const { data, requestId } = unwrapSnaptradeResponse(result);
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
+      markNonCacheable(c);
       return c.json(data);
     } catch (error) {
       return handleSnaptradeError(c, error);
@@ -54,8 +61,10 @@ export function registerCryptoRoutes(app: Hono) {
         userSecret: params.userSecret
       });
 
-      const { data, requestId } = unwrapSnaptradeResponse(result);
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
+      markNonCacheable(c);
       return c.json(data);
     } catch (error) {
       return handleSnaptradeError(c, error);
@@ -77,8 +86,10 @@ export function registerCryptoRoutes(app: Hono) {
         requestBody: buildOrderRequest(payload)
       });
 
-      const { data, requestId } = unwrapSnaptradeResponse(result);
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
+      markNonCacheable(c);
       return c.json(data);
     } catch (error) {
       return handleSnaptradeError(c, error);
@@ -116,8 +127,10 @@ export function registerCryptoRoutes(app: Hono) {
         requestBody: buildOrderRequest(payload)
       });
 
-      const { data, requestId } = unwrapSnaptradeResponse(result);
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
+      markNonCacheable(c);
       return c.json(data);
     } catch (error) {
       return handleSnaptradeError(c, error);
@@ -165,7 +178,7 @@ function buildOrderRequest(payload: OrderPayload) {
  * the resulting HTTP response is returned directly to the caller.
  */
 function parseQuery<T>(c: Context, schema: ZodType<T, any, any>): T | Response {
-  const parsed = schema.safeParse(c.req.query());
+  const parsed = schema.safeParse(normalizeQueryParams(c.req.query()));
   if (parsed.success) {
     return parsed.data;
   }
@@ -194,4 +207,23 @@ async function parseJsonBody<T>(c: Context, schema: ZodType<T, any, any>): Promi
       );
     }
   }
+}
+
+function normalizeQueryParams(params: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (Array.isArray(value)) {
+      // Hono hands multi-value params in array form (even when there is only one
+      // entry). SnapTrade expects a single string, so we collapse to the first
+      // element to keep validation predictable.
+      normalized[key] = value[0];
+    } else {
+      normalized[key] = value;
+    }
+  }
+  return normalized;
+}
+
+function markNonCacheable(c: Context) {
+  c.header("Cache-Control", "no-store");
 }
