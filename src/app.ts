@@ -10,7 +10,8 @@ import { validationError } from "./utils/snaptrade";
  */
 const app = new Hono();
 
-app.get("/healthz", (c) => c.json({ status: "ok" }));
+// Fly health checks expect a simple 200 response.
+app.get("/healthz", (c) => c.text("ok"));
 
 registerCryptoRoutes(app);
 
