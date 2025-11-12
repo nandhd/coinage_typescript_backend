@@ -4,7 +4,7 @@ import { ZodError, type ZodType } from "zod";
 import { snaptrade } from "../lib/snaptrade";
 import { PerKeyRateLimiter } from "../lib/rateLimiter";
 import { OrderPayload, PairQuery, QuoteQuery, orderSchema, pairQuerySchema, quoteQuerySchema } from "../schemas/crypto";
-import { handleSnaptradeError, unwrapSnaptradeResponse, validationError } from "../utils/snaptrade";
+import { handleSnaptradeError, propagateRateLimitHeaders, unwrapSnaptradeResponse, validationError } from "../utils/snaptrade";
 
 // Enforce one trade per second per account to align with SnapTrade guidance.
 const tradingLimiter = new PerKeyRateLimiter(1_000);
@@ -31,8 +31,9 @@ export function registerCryptoRoutes(app: Hono) {
         quote: params.quote
       });
 
-      const { data, requestId } = unwrapSnaptradeResponse(result);
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
       return c.json(data);
     } catch (error) {
       return handleSnaptradeError(c, error);
@@ -54,8 +55,9 @@ export function registerCryptoRoutes(app: Hono) {
         userSecret: params.userSecret
       });
 
-      const { data, requestId } = unwrapSnaptradeResponse(result);
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
       return c.json(data);
     } catch (error) {
       return handleSnaptradeError(c, error);
@@ -77,8 +79,9 @@ export function registerCryptoRoutes(app: Hono) {
         requestBody: buildOrderRequest(payload)
       });
 
-      const { data, requestId } = unwrapSnaptradeResponse(result);
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
       return c.json(data);
     } catch (error) {
       return handleSnaptradeError(c, error);
@@ -116,8 +119,9 @@ export function registerCryptoRoutes(app: Hono) {
         requestBody: buildOrderRequest(payload)
       });
 
-      const { data, requestId } = unwrapSnaptradeResponse(result);
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
       return c.json(data);
     } catch (error) {
       return handleSnaptradeError(c, error);

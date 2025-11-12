@@ -50,11 +50,27 @@ describe("crypto routes", () => {
       expect(payload.accountId).toBe(accountId);
       expect(payload.userId).toBe("snap-user");
       expect(payload.userSecret).toBe("snap-secret");
+      const headers = {
+        get: (key: string) => {
+          const lower = key.toLowerCase();
+          if (lower === "x-request-id") {
+            return "req-123";
+          }
+          if (lower === "x-ratelimit-limit") {
+            return "100";
+          }
+          if (lower === "x-ratelimit-remaining") {
+            return "99";
+          }
+          if (lower === "x-ratelimit-reset") {
+            return "1699999999";
+          }
+          return undefined;
+        }
+      };
       return {
         data: responseBody,
-        headers: {
-          get: (key: string) => (key.toLowerCase() === "x-request-id" ? "req-123" : undefined)
-        }
+        headers
       };
     });
 
@@ -65,6 +81,9 @@ describe("crypto routes", () => {
     expect(await res.json()).toEqual(responseBody);
     expect(tradingMocks.searchCryptocurrencyPairInstruments.mock.calls.length).toBe(1);
     expect(res.headers.get("X-SnapTrade-Request-ID")).toBe("req-123");
+    expect(res.headers.get("X-SnapTrade-RateLimit-Limit")).toBe("100");
+    expect(res.headers.get("X-SnapTrade-RateLimit-Remaining")).toBe("99");
+    expect(res.headers.get("X-SnapTrade-RateLimit-Reset")).toBe("1699999999");
   });
 
   it("rejects invalid pair queries with 400", async () => {
@@ -79,7 +98,18 @@ describe("crypto routes", () => {
   it("enforces per-account rate limiting on place order", async () => {
     tradingMocks.placeCryptoOrder.mockImplementation(async () => ({
       data: { order_id: "abc" },
-      headers: { get: () => "req-order" }
+      headers: {
+        get: (key: string) => {
+          const lower = key.toLowerCase();
+          if (lower === "x-request-id") {
+            return "req-order";
+          }
+          if (lower === "x-ratelimit-remaining") {
+            return "42";
+          }
+          return undefined;
+        }
+      }
     }));
 
     const payload = {
@@ -102,6 +132,7 @@ describe("crypto routes", () => {
     });
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({ order_id: "abc" });
+    expect(first.headers.get("X-SnapTrade-RateLimit-Remaining")).toBe("42");
 
     const second = await app.request("/crypto/place", {
       method: "POST",
