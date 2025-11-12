@@ -9,9 +9,9 @@
     "test": "bun test"
   },
   "dependencies": {
-    "hono": "latest",
-    "snaptrade-typescript-sdk": "latest",
-    "zod": "latest"
+    "hono": "4.10.5",
+    "snaptrade-typescript-sdk": "9.0.149",
+    "zod": "4.1.12"
   },
   "devDependencies": {
     "@types/bun": "latest"

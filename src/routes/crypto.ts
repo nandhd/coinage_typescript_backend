@@ -4,7 +4,7 @@ import { ZodError, type ZodType } from "zod";
 import { snaptrade } from "../lib/snaptrade";
 import { PerKeyRateLimiter } from "../lib/rateLimiter";
 import { OrderPayload, PairQuery, QuoteQuery, orderSchema, pairQuerySchema, quoteQuerySchema } from "../schemas/crypto";
-import { handleSnaptradeError, unwrapSnaptradeResponse, validationError } from "../utils/snaptrade";
+import { handleSnaptradeError, propagateRateLimitHeaders, unwrapSnaptradeResponse, validationError } from "../utils/snaptrade";
 
 // Enforce one trade per second per account to align with SnapTrade guidance.
 const tradingLimiter = new PerKeyRateLimiter(1_000);
@@ -31,8 +31,9 @@ export function registerCryptoRoutes(app: Hono) {
         quote: params.quote
       });
 
-      const { data, requestId } = unwrapSnaptradeResponse(result);
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
       return c.json(data);
     } catch (error) {
       return handleSnaptradeError(c, error);
@@ -54,8 +55,9 @@ export function registerCryptoRoutes(app: Hono) {
         userSecret: params.userSecret
       });
 
-      const { data, requestId } = unwrapSnaptradeResponse(result);
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
       return c.json(data);
     } catch (error) {
       return handleSnaptradeError(c, error);
@@ -77,8 +79,9 @@ export function registerCryptoRoutes(app: Hono) {
         requestBody: buildOrderRequest(payload)
       });
 
-      const { data, requestId } = unwrapSnaptradeResponse(result);
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
       return c.json(data);
     } catch (error) {
       return handleSnaptradeError(c, error);
@@ -116,8 +119,9 @@ export function registerCryptoRoutes(app: Hono) {
         requestBody: buildOrderRequest(payload)
       });
 
-      const { data, requestId } = unwrapSnaptradeResponse(result);
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
       return c.json(data);
     } catch (error) {
       return handleSnaptradeError(c, error);
@@ -153,24 +157,70 @@ function buildOrderRequest(payload: OrderPayload) {
     type: payload.type,
     time_in_force: payload.time_in_force,
     amount: payload.amount,
-    limit_price: payload.limit_price,
-    stop_price: payload.stop_price,
-    post_only: payload.post_only,
-    expiration_date: payload.expiration_date
+    ...(payload.limit_price !== undefined ? { limit_price: payload.limit_price } : {}),
+    ...(payload.stop_price !== undefined ? { stop_price: payload.stop_price } : {}),
+    ...(payload.post_only !== undefined ? { post_only: payload.post_only } : {}),
+    ...(payload.expiration_date !== undefined ? { expiration_time: payload.expiration_date } : {})
   };
 }
 
 /**
  * Shared query parsing helper used by the GET endpoints. When validation fails
  * the resulting HTTP response is returned directly to the caller.
+ *
+ * Hono exposes query parameters as `URLSearchParams`, but Zod expects a plain
+ * record of strings. We normalize before validation so callers can reliably
+ * send repeated keys (we keep the first value) without tripping the schema.
  */
 function parseQuery<T>(c: Context, schema: ZodType<T, any, any>): T | Response {
-  const parsed = schema.safeParse(c.req.query());
+  const raw = c.req.query();
+  const normalized = normalizeQueryParams(raw);
+  const parsed = schema.safeParse(normalized);
   if (parsed.success) {
     return parsed.data;
   }
-
   return validationError(c, parsed.error);
+}
+
+/**
+ * Converts the heterogeneous query parameter shapes that Hono hands us
+ * (`URLSearchParams`, array values from Node-style objects, or plain records)
+ * into the `{ [key]: string }` map format that Zod expects.
+ *
+ * - When a parameter appears multiple times (e.g. `?foo=a&foo=b`) we retain the
+ *   first occurrence so callers don't accidentally send arrays to SnapTrade.
+ * - For Node/Express-style objects we collapse `string[]` values the same way.
+ * - Anything else (numbers, booleans, nullish) is skipped to keep validation strict.
+ */
+function normalizeQueryParams(params: unknown): Record<string, string> {
+  if (!params) {
+    return {};
+  }
+
+  const normalized: Record<string, string> = {};
+
+  if (params instanceof URLSearchParams) {
+    for (const [key, value] of params.entries()) {
+      if (!(key in normalized)) {
+        normalized[key] = value;
+      }
+    }
+    return normalized;
+  }
+
+  if (typeof params !== "object") {
+    return normalized;
+  }
+
+  for (const [key, value] of Object.entries(params as Record<string, unknown>)) {
+    if (typeof value === "string") {
+      normalized[key] = value;
+    } else if (Array.isArray(value) && value.length > 0) {
+      normalized[key] = value[0];
+    }
+  }
+
+  return normalized;
 }
 
 /**
