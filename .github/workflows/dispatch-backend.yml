@@ -1,0 +1,24 @@
+name: Dispatch Backend Deploy
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  notify-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger repository dispatch in coinage_backend
+        env:
+          DISPATCH_TOKEN: ${{ secrets.COINAGE_BACKEND_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$DISPATCH_TOKEN" ]; then
+            echo "COINAGE_BACKEND_DISPATCH_TOKEN secret is missing" >&2
+            exit 1
+          fi
+
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${DISPATCH_TOKEN}" \
+            https://api.github.com/repos/nandhd/coinage_backend/dispatches \
+            -d "{\"event_type\":\"ts-service-updated\",\"client_payload\":{\"source\":\"coinage_typescript_backend\",\"sha\":\"${GITHUB_SHA}\"}}"
