@@ -224,10 +224,10 @@ describe("crypto routes", () => {
     };
 
     tradingMocks.previewCryptoOrder.mockImplementation(async (request) => {
-      expect(request.requestBody).not.toHaveProperty("expiration_date");
-      expect(request.requestBody.expiration_time).toBe(payload.expiration_date);
-      expect(request.requestBody.limit_price).toBe(payload.limit_price);
-      expect(request.requestBody.post_only).toBe(true);
+      expect(request).not.toHaveProperty("expiration_date");
+      expect(request.expiration_time).toBe(payload.expiration_date);
+      expect(request.limit_price).toBe(payload.limit_price);
+      expect(request.post_only).toBe(true);
       return {
         data: { order_id: "preview-123" },
         headers: { get: () => undefined }

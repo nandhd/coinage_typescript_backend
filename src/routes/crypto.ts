@@ -121,6 +121,7 @@ export function registerCryptoRoutes(app: Hono) {
       return payloadResult;
     }
     const payload = payloadResult;
+    const orderRequest = buildOrderRequest(payload);
     const user = userSnippet(payload.userId);
     const account = accountSnippet(payload.accountId);
     // Include the sanitized order metadata so we can correlate Bun + Java logs by event id.
@@ -135,7 +136,7 @@ export function registerCryptoRoutes(app: Hono) {
         accountId: payload.accountId,
         userId: payload.userId,
         userSecret: payload.userSecret,
-        requestBody: buildOrderRequest(payload)
+        ...orderRequest
       });
 
       const { data, requestId, headers } = unwrapSnaptradeResponse(result);
@@ -161,6 +162,7 @@ export function registerCryptoRoutes(app: Hono) {
       return payloadResult;
     }
     const payload = payloadResult;
+    const orderRequest = buildOrderRequest(payload);
     const user = userSnippet(payload.userId);
     const account = accountSnippet(payload.accountId);
     logInfo("snaptrade.crypto.place.request", {
@@ -195,7 +197,7 @@ export function registerCryptoRoutes(app: Hono) {
         accountId: payload.accountId,
         userId: payload.userId,
         userSecret: payload.userSecret,
-        requestBody: buildOrderRequest(payload)
+        ...orderRequest
       });
 
       const { data, requestId, headers } = unwrapSnaptradeResponse(result);
