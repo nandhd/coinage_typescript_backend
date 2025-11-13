@@ -5,8 +5,7 @@ import app from "./app";
  * up behind Fly.io's process groups without additional code changes.
  */
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
-const privateIp = process.env.FLY_PRIVATE_IP;
-const hostname = process.env.HOST ?? (privateIp ?? "::");
+const hostname = process.env.HOST ?? "::";
 
 const server = Bun.serve({
   fetch: app.fetch,
