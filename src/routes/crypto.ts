@@ -21,6 +21,15 @@ export function registerCryptoRoutes(app: Hono) {
       return paramsResult;
     }
     const params = paramsResult;
+    const user = userSnippet(params.userId);
+    const account = accountSnippet(params.accountId);
+    // Emit a lightweight log so we can trace pair discovery issues without logging secrets.
+    logInfo("snaptrade.crypto.search.request", {
+      user,
+      account,
+      base: params.base ?? null,
+      quote: params.quote ?? null
+    });
 
     try {
       const result = await snaptrade.trading.searchCryptocurrencyPairInstruments({
@@ -34,8 +43,16 @@ export function registerCryptoRoutes(app: Hono) {
       const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
       propagateRateLimitHeaders(c, headers);
+      // Pair count is enough for debugging; avoid logging entire payload to keep logs lean.
+      logInfo("snaptrade.crypto.search.response", {
+        user,
+        account,
+        count: Array.isArray(data) ? data.length : undefined,
+        requestId
+      });
       return c.json(data);
     } catch (error) {
+      logWarn("snaptrade.crypto.search.error", { user, account, message: (error as Error)?.message });
       return handleSnaptradeError(c, error);
     }
   });
@@ -46,6 +63,13 @@ export function registerCryptoRoutes(app: Hono) {
       return paramsResult;
     }
     const params = paramsResult;
+    const user = userSnippet(params.userId);
+    const account = accountSnippet(params.accountId);
+    logInfo("snaptrade.crypto.quote.request", {
+      user,
+      account,
+      pair: params.instrumentSymbol
+    });
 
     try {
       const result = await snaptrade.trading.getCryptocurrencyPairQuote({
@@ -58,8 +82,15 @@ export function registerCryptoRoutes(app: Hono) {
       const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
       propagateRateLimitHeaders(c, headers);
+      logInfo("snaptrade.crypto.quote.response", {
+        user,
+        account,
+        pair: params.instrumentSymbol,
+        requestId
+      });
       return c.json(data);
     } catch (error) {
+      logWarn("snaptrade.crypto.quote.error", { user, account, message: (error as Error)?.message });
       return handleSnaptradeError(c, error);
     }
   });
@@ -70,6 +101,14 @@ export function registerCryptoRoutes(app: Hono) {
       return payloadResult;
     }
     const payload = payloadResult;
+    const user = userSnippet(payload.userId);
+    const account = accountSnippet(payload.accountId);
+    // Include the sanitized order metadata so we can correlate Bun + Java logs by event id.
+    logInfo("snaptrade.crypto.preview.request", {
+      user,
+      account,
+      ...summarizeOrder(payload)
+    });
 
     try {
       const result = await snaptrade.trading.previewCryptoOrder({
@@ -82,8 +121,16 @@ export function registerCryptoRoutes(app: Hono) {
       const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
       propagateRateLimitHeaders(c, headers);
+      logInfo("snaptrade.crypto.preview.response", {
+        user,
+        account,
+        requestId,
+        feeAmount: (data as any)?.estimated_fee?.amount ?? null,
+        feeCurrency: (data as any)?.estimated_fee?.currency ?? null
+      });
       return c.json(data);
     } catch (error) {
+      logWarn("snaptrade.crypto.preview.error", { user, account, message: (error as Error)?.message });
       return handleSnaptradeError(c, error);
     }
   });
@@ -94,11 +141,23 @@ export function registerCryptoRoutes(app: Hono) {
       return payloadResult;
     }
     const payload = payloadResult;
+    const user = userSnippet(payload.userId);
+    const account = accountSnippet(payload.accountId);
+    logInfo("snaptrade.crypto.place.request", {
+      user,
+      account,
+      ...summarizeOrder(payload)
+    });
 
     const limiterKey = `${payload.accountId}:${payload.userId}`;
     const limiterResult = tradingLimiter.tryAcquire(limiterKey);
 
     if (!limiterResult.allowed) {
+      logWarn("snaptrade.crypto.place.rate_limited", {
+        user,
+        account,
+        retryAfterMs: limiterResult.retryAfterMs
+      });
       // Returning HTTP 429 makes the retry semantics explicit for callers.
       c.header("Retry-After", Math.max(1, Math.ceil(limiterResult.retryAfterMs / 1000)).toString());
       return c.json(
@@ -122,8 +181,17 @@ export function registerCryptoRoutes(app: Hono) {
       const { data, requestId, headers } = unwrapSnaptradeResponse(result);
       propagateRequestId(c, requestId);
       propagateRateLimitHeaders(c, headers);
+      const orderNode = (data as any)?.order ?? data;
+      logInfo("snaptrade.crypto.place.response", {
+        user,
+        account,
+        requestId,
+        brokerageOrderId: orderNode?.brokerage_order_id ?? orderNode?.id ?? null,
+        status: orderNode?.status ?? null
+      });
       return c.json(data);
     } catch (error) {
+      logWarn("snaptrade.crypto.place.error", { user, account, message: (error as Error)?.message });
       return handleSnaptradeError(c, error);
     }
   });
@@ -221,6 +289,46 @@ function normalizeQueryParams(params: unknown): Record<string, string> {
   }
 
   return normalized;
+}
+
+function summarizeOrder(payload: OrderPayload) {
+  // Strip potentially large or sensitive fields before logging; only structural data remains.
+  return {
+    pair: payload.instrument.symbol,
+    side: payload.side,
+    orderType: payload.type,
+    tif: payload.time_in_force,
+    amount: payload.amount,
+    limitPrice: payload.limit_price ?? null,
+    stopPrice: payload.stop_price ?? null,
+    postOnly: payload.post_only ?? null
+  };
+}
+
+function userSnippet(userId: string) {
+  return userId.slice(-6);
+}
+
+function accountSnippet(accountId: string) {
+  return accountId.slice(0, 8);
+}
+
+function logInfo(event: string, meta: Record<string, unknown>) {
+  // JSON logs make it easier to search in Fly/Datadog; fall back to console formatting if stringify fails.
+  try {
+    console.info(JSON.stringify({ event, ...meta, timestamp: new Date().toISOString() }));
+  } catch {
+    console.info(event, meta);
+  }
+}
+
+function logWarn(event: string, meta: Record<string, unknown>) {
+  // Mirror logInfo but write to stderr so warnings/errors pop in aggregated logs.
+  try {
+    console.warn(JSON.stringify({ event, ...meta, timestamp: new Date().toISOString() }));
+  } catch {
+    console.warn(event, meta);
+  }
 }
 
 /**
