@@ -3,6 +3,11 @@ name: Dispatch Backend Deploy
 on:
   push:
     branches: ["main"]
+    paths:
+      - "src/**"
+      - "package.json"
+      - "bun.lockb"
+      - ".github/workflows/**"
 
 jobs:
   notify-backend:
