@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 import type { Context } from "hono";
 import { ZodError, type ZodType } from "zod";
 import { snaptrade } from "../lib/snaptrade";
+import { env } from "../lib/env";
 import { PerKeyRateLimiter } from "../lib/rateLimiter";
 import { OrderPayload, PairQuery, QuoteQuery, orderSchema, pairQuerySchema, quoteQuerySchema } from "../schemas/crypto";
 import { handleSnaptradeError, propagateRateLimitHeaders, unwrapSnaptradeResponse, validationError } from "../utils/snaptrade";
@@ -15,6 +16,25 @@ const tradingLimiter = new PerKeyRateLimiter(1_000);
  * leaving error shaping and rate limiting to small helpers.
  */
 export function registerCryptoRoutes(app: Hono) {
+  app.use("/crypto/*", async (c, next) => {
+    const secret = env.COINAGE_TS_SHARED_SECRET;
+    if (!secret) {
+      return next();
+    }
+    const provided = c.req.header("X-Coinage-TS-Secret");
+    if (provided !== secret) {
+      logWarn("snaptrade.crypto.auth.error", { route: c.req.path, reason: "missing_or_invalid_secret" });
+      return c.json(
+        {
+          error: "unauthorized",
+          message: "Missing or invalid shared secret."
+        },
+        401
+      );
+    }
+    return next();
+  });
+
   app.get("/crypto/pairs", async (c) => {
     const paramsResult = parseQuery<PairQuery>(c, pairQuerySchema);
     if (paramsResult instanceof Response) {

@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
 import { Hono } from "hono";
+import { env } from "../src/lib/env";
 
 const tradingMocks = {
   searchCryptocurrencyPairInstruments: mock(async () => {
@@ -30,14 +31,21 @@ function createApp() {
   return app;
 }
 
+const originalSharedSecret = env.COINAGE_TS_SHARED_SECRET;
+
 beforeEach(() => {
   resetCryptoRateLimiterForTests();
+  (env as any).COINAGE_TS_SHARED_SECRET = originalSharedSecret;
   for (const fn of Object.values(tradingMocks)) {
     fn.mockReset();
     fn.mockImplementation(async () => {
       throw new Error("mock not configured");
     });
   }
+});
+
+afterAll(() => {
+  (env as any).COINAGE_TS_SHARED_SECRET = originalSharedSecret;
 });
 
 describe("crypto routes", () => {
@@ -84,6 +92,37 @@ describe("crypto routes", () => {
     expect(res.headers.get("X-SnapTrade-RateLimit-Limit")).toBe("100");
     expect(res.headers.get("X-SnapTrade-RateLimit-Remaining")).toBe("99");
     expect(res.headers.get("X-SnapTrade-RateLimit-Reset")).toBe("1699999999");
+  });
+
+  it("rejects requests missing the shared secret header when configured", async () => {
+    (env as any).COINAGE_TS_SHARED_SECRET = "bridge-secret";
+    const accountId = "55555555-6666-4777-8eee-999999999999";
+    const app = createApp();
+    const res = await app.request(`/crypto/pairs?accountId=${accountId}&userId=snap-user&userSecret=snap-secret`);
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.error).toBe("unauthorized");
+  });
+
+  it("accepts requests when shared secret header matches", async () => {
+    (env as any).COINAGE_TS_SHARED_SECRET = "bridge-secret";
+    tradingMocks.searchCryptocurrencyPairInstruments.mockImplementation(async () => ({
+      data: [{ symbol: "ETH-USD" }],
+      headers: {
+        get: () => undefined
+      }
+    }));
+    const accountId = "aaaa1111-2222-4333-8fff-aaaaaaa00000";
+    const app = createApp();
+    const res = await app.request(
+      `/crypto/pairs?accountId=${accountId}&userId=snap-user&userSecret=snap-secret`,
+      {
+        headers: { "X-Coinage-TS-Secret": "bridge-secret" }
+      }
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([{ symbol: "ETH-USD" }]);
+    expect(tradingMocks.searchCryptocurrencyPairInstruments.mock.calls.length).toBe(1);
   });
 
   it("rejects invalid pair queries with 400", async () => {
