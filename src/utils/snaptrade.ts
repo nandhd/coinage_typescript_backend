@@ -134,37 +134,66 @@ export function readHeaderValue(headers: unknown, headerName: string): string | 
   }
 
   const lowerCaseName = headerName.toLowerCase();
-  const headersWithGet = headers as { get?: (key: string) => unknown };
-  if (typeof headersWithGet.get === "function") {
-    const candidateWithGet =
-      headersWithGet.get.call(headers, headerName) ?? headersWithGet.get.call(headers, lowerCaseName);
-    if (typeof candidateWithGet === "string") {
-      return candidateWithGet;
-    }
-    if (candidateWithGet !== undefined && candidateWithGet !== null) {
-      return String(candidateWithGet);
-    }
-  }
 
-  if (typeof (headers as { forEach?: (cb: (value: unknown, key: string) => void) => void }).forEach === "function") {
-    let match: string | undefined;
-    (headers as { forEach: (cb: (value: unknown, key: string) => void) => void }).forEach((value, key) => {
-      if (key.toLowerCase() === lowerCaseName && match === undefined) {
-        match = typeof value === "string" ? value : String(value);
+  try {
+    const headersWithGet = headers as { get?: (key: string) => unknown };
+    if (typeof headersWithGet.get === "function") {
+      const candidateWithGet =
+        headersWithGet.get.call(headers, headerName) ?? headersWithGet.get.call(headers, lowerCaseName);
+      if (typeof candidateWithGet === "string") {
+        return candidateWithGet;
       }
-    });
-    if (match) {
-      return match;
+      if (candidateWithGet !== undefined && candidateWithGet !== null) {
+        return String(candidateWithGet);
+      }
     }
-  }
 
-  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
-    if (key.toLowerCase() === lowerCaseName) {
-      return typeof value === "string" ? value : String(value);
+    if (typeof (headers as { forEach?: (cb: (value: unknown, key: string) => void) => void }).forEach === "function") {
+      let match: string | undefined;
+      (headers as { forEach: (cb: (value: unknown, key: string) => void) => void }).forEach((value, key) => {
+        if (key.toLowerCase() === lowerCaseName && match === undefined) {
+          match = typeof value === "string" ? value : String(value);
+        }
+      });
+      if (match) {
+        return match;
+      }
     }
+
+    for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+      if (key.toLowerCase() === lowerCaseName) {
+        return typeof value === "string" ? value : String(value);
+      }
+    }
+  } catch (error) {
+    logHeaderParsingError(headerName, headers, error);
   }
 
   return undefined;
+}
+
+function logHeaderParsingError(headerName: string, headers: unknown, error: unknown) {
+  try {
+    console.warn(
+      JSON.stringify({
+        event: "snaptrade.headers.parse_error",
+        headerName,
+        headersSnapshot: safeSerialize(headers),
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString()
+      })
+    );
+  } catch {
+    console.warn("snaptrade.headers.parse_error", { headerName, error });
+  }
+}
+
+function safeSerialize(value: unknown) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return typeof value === "string" ? value : Object.prototype.toString.call(value);
+  }
 }
 
 /**
