@@ -128,6 +128,12 @@ function isAxiosLikeError(
  * key/value records. SnapTrade is case-insensitive, so we normalise keys before
  * returning the first matching value.
  */
+/**
+ * SnapTrade responses surface headers through several shapes (Fetch Headers,
+ * Axios plain objects, or custom structures). This utility tries every shape
+ * in order of precision while trapping parsing issues so we can diagnose future
+ * SDK changes by inspecting structured logs rather than crashing the handler.
+ */
 export function readHeaderValue(headers: unknown, headerName: string): string | undefined {
   if (!headers || typeof headers !== "object") {
     return undefined;
@@ -174,6 +180,8 @@ export function readHeaderValue(headers: unknown, headerName: string): string | 
 
 function logHeaderParsingError(headerName: string, headers: unknown, error: unknown) {
   try {
+    // Preserve as much context as possible—raw headers often contain nested
+    // structures, so we JSON.stringify but fall back to `toString` if that fails.
     console.warn(
       JSON.stringify({
         event: "snaptrade.headers.parse_error",
@@ -192,6 +200,7 @@ function safeSerialize(value: unknown) {
   try {
     return JSON.stringify(value);
   } catch {
+    // Fall back to the default object tag instead of throwing inside logging.
     return typeof value === "string" ? value : Object.prototype.toString.call(value);
   }
 }
