@@ -134,13 +134,16 @@ export function readHeaderValue(headers: unknown, headerName: string): string | 
   }
 
   const lowerCaseName = headerName.toLowerCase();
-  const getter = (headers as { get?: (key: string) => unknown }).get;
-  const candidateWithGet = getter?.(headerName) ?? getter?.(lowerCaseName);
-  if (typeof candidateWithGet === "string") {
-    return candidateWithGet;
-  }
-  if (candidateWithGet !== undefined && candidateWithGet !== null) {
-    return String(candidateWithGet);
+  const headersWithGet = headers as { get?: (key: string) => unknown };
+  if (typeof headersWithGet.get === "function") {
+    const candidateWithGet =
+      headersWithGet.get.call(headers, headerName) ?? headersWithGet.get.call(headers, lowerCaseName);
+    if (typeof candidateWithGet === "string") {
+      return candidateWithGet;
+    }
+    if (candidateWithGet !== undefined && candidateWithGet !== null) {
+      return String(candidateWithGet);
+    }
   }
 
   if (typeof (headers as { forEach?: (cb: (value: unknown, key: string) => void) => void }).forEach === "function") {
