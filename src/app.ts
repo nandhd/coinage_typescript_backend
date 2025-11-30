@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { ZodError } from "zod";
 import { registerCryptoRoutes } from "./routes/crypto";
+import { registerOrderRoutes } from "./routes/orders";
 import { validationError } from "./utils/snaptrade";
 
 /**
@@ -14,6 +15,7 @@ const app = new Hono();
 app.get("/healthz", (c) => c.text("ok"));
 
 registerCryptoRoutes(app);
+registerOrderRoutes(app);
 
 /**
  * Catch-all error handler. Most validation errors are handled in the routes,
