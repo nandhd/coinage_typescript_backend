@@ -58,6 +58,8 @@ export function registerEquityRoutes(app: Hono) {
 
     try {
       const body = buildManualTradeForm(payload);
+      // Debug payload to confirm what we send to SnapTrade (no secrets included).
+      logInfo("snaptrade.equity.impact.body", { user, account, body });
       const result = await snaptrade.trading.getOrderImpact({
         userId: payload.userId,
         userSecret: payload.userSecret,
@@ -102,6 +104,8 @@ export function registerEquityRoutes(app: Hono) {
 
     try {
       const body = buildManualTradeForm(payload);
+      // Debug payload to confirm what we send to SnapTrade (no secrets included).
+      logInfo("snaptrade.equity.place.body", { user, account, body });
       const result = await snaptrade.trading.placeForceOrder({
         userId: payload.userId,
         userSecret: payload.userSecret,
