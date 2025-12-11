@@ -60,10 +60,11 @@ export function registerEquityRoutes(app: Hono) {
       const body = buildManualTradeForm(payload);
       // Debug payload to confirm what we send to SnapTrade (no secrets included).
       logInfo("snaptrade.equity.impact.body", { user, account, body });
+      // The SDK expects ManualTradeForm fields at the top level (not nested under `manualTradeForm`).
       const result = await snaptrade.trading.getOrderImpact({
         userId: payload.userId,
         userSecret: payload.userSecret,
-        manualTradeForm: body
+        ...body
       });
 
       const { data, requestId, headers } = unwrapSnaptradeResponse(result);
@@ -106,10 +107,11 @@ export function registerEquityRoutes(app: Hono) {
       const body = buildManualTradeForm(payload);
       // Debug payload to confirm what we send to SnapTrade (no secrets included).
       logInfo("snaptrade.equity.place.body", { user, account, body });
+      // The SDK expects ManualTradeFormWithOptions fields at the top level (not nested under `manualTradeFormWithOptions`).
       const result = await snaptrade.trading.placeForceOrder({
         userId: payload.userId,
         userSecret: payload.userSecret,
-        manualTradeFormWithOptions: body
+        ...body
       });
 
       const { data, requestId, headers } = unwrapSnaptradeResponse(result);

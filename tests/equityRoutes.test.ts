@@ -46,19 +46,16 @@ describe("equity routes", () => {
     tradingMocks.getOrderImpact.mockImplementation(async (payload) => {
       expect(payload.userId).toBe("snap-user");
       expect(payload.userSecret).toBe("snap-secret");
-      expect(payload.manualTradeForm).toEqual({
-        account_id: accountId,
-        action: "SELL",
-        order_type: "Market",
-        time_in_force: "Day",
-        trading_session: undefined,
-        universal_symbol_id: null,
-        symbol: "AAPL",
-        units: null,
-        notional_value: 25,
-        price: null,
-        stop: null
-      });
+      expect(payload.account_id).toBe(accountId);
+      expect(payload.action).toBe("SELL");
+      expect(payload.order_type).toBe("Market");
+      expect(payload.time_in_force).toBe("Day");
+      expect(payload.symbol).toBe("AAPL");
+      expect(payload.universal_symbol_id).toBeUndefined(); // symbol takes precedence
+      expect(payload.units).toBeUndefined();
+      expect(payload.notional_value).toBe(25);
+      expect(payload.price).toBeUndefined();
+      expect(payload.stop).toBeUndefined();
       return {
         data: responseBody,
         headers: {
@@ -107,9 +104,11 @@ describe("equity routes", () => {
     const responseBody = { brokerage_order_id: "bo-1", status: "submitted" };
 
     tradingMocks.placeForceOrder.mockImplementation(async (payload) => {
-      expect(payload.manualTradeFormWithOptions.notional_value).toBe(50); // string -> number
-      expect(payload.manualTradeFormWithOptions.price).toBe(null);
-      expect(payload.manualTradeFormWithOptions.stop).toBe(null); // undefined -> null
+      expect(payload.account_id).toBe(accountId);
+      expect(payload.action).toBe("BUY");
+      expect(payload.notional_value).toBe(50); // string -> number
+      expect(payload.price).toBeUndefined();
+      expect(payload.stop).toBeUndefined();
       return {
         data: responseBody,
         headers: {
