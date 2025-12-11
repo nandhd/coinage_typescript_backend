@@ -142,8 +142,8 @@ function buildManualTradeForm(payload: EquityOrderPayload) {
     order_type: payload.orderType,
     time_in_force: payload.timeInForce,
     trading_session: payload.tradingSession,
-    ...(payload.universalSymbolId ? { universal_symbol_id: payload.universalSymbolId } : {}),
-    ...(payload.symbol ? { symbol: payload.symbol } : {}),
+    // Prefer ticker symbol when provided; otherwise fall back to universal id.
+    ...(payload.symbol ? { symbol: payload.symbol } : payload.universalSymbolId ? { universal_symbol_id: payload.universalSymbolId } : {}),
     // Only include units when a concrete value is provided; avoid propagating null.
     ...(payload.units != null ? { units: payload.units } : {}),
     // SnapTrade accepts number|string for notional_value; normalize strings to numbers for consistency.
