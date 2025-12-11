@@ -11,6 +11,11 @@ import { handleSnaptradeError, propagateRateLimitHeaders, unwrapSnaptradeRespons
  * These mirror the crypto routes: shared-secret auth, strict validation, and response header passthrough.
  */
 export function registerEquityRoutes(app: Hono) {
+  // Build marker to confirm deployed version in logs.
+  logInfo("snaptrade.equity.bridge.build", {
+    marker: "ts-equity-bridge-2025-12-11-01"
+  });
+
   // Shared-secret guard for all equity endpoints to prevent public access.
   app.use("/equity/*", async (c, next) => {
     const secret = env.COINAGE_TS_SHARED_SECRET;
