@@ -133,13 +133,13 @@ function buildManualTradeForm(payload: EquityOrderPayload) {
     order_type: payload.orderType,
     time_in_force: payload.timeInForce,
     trading_session: payload.tradingSession,
-    universal_symbol_id: payload.universalSymbolId ?? null,
-    symbol: payload.symbol ?? null,
-    units: payload.units ?? null,
+    ...(payload.universalSymbolId ? { universal_symbol_id: payload.universalSymbolId } : {}),
+    ...(payload.symbol ? { symbol: payload.symbol } : {}),
+    ...(payload.units !== undefined ? { units: payload.units } : {}),
     // SnapTrade accepts number|string for notional_value; normalize strings to numbers for consistency.
-    notional_value: payload.notionalValue !== undefined ? toNumber(payload.notionalValue) : null,
-    price: payload.price !== undefined ? toNumber(payload.price) : null,
-    stop: payload.stop !== undefined ? toNumber(payload.stop) : null,
+    ...(payload.notionalValue !== undefined ? { notional_value: toNumber(payload.notionalValue) } : {}),
+    ...(payload.price !== undefined ? { price: toNumber(payload.price) } : {}),
+    ...(payload.stop !== undefined ? { stop: toNumber(payload.stop) } : {}),
     // The SDK does not expose clientEventId/clientOrderId for equities; keep request lean.
   };
 }
