@@ -87,3 +87,34 @@ export const equityOrderSchema = z
   });
 
 export type EquityOrderPayload = z.infer<typeof equityOrderSchema>;
+
+/**
+ * Payload for placing a previously checked equity order by trade id.
+ *
+ * Why this exists:
+ * - SnapTrade has two equity placement flows:
+ *   1) "Force" place (no prior impact): `placeForceOrder` (POST /equities/...) where we pass
+ *      the full ManualTradeFormWithOptions payload (account, symbol/uid, sizing, etc).
+ *   2) "Checked" place (impact first): `placeOrder` (POST /trade/{tradeId}) where we pass only
+ *      the `tradeId` returned by `getOrderImpact`.
+ * - Historically, Coinage's automation flow executed checked trades via the Java Konfig SDK,
+ *   which caused SnapTrade to record a Java user-agent (Konfig/.../java).
+ * - We want *all* trading calls (manual + automation) to go through this Bun/TypeScript service
+ *   so SnapTrade sees a consistent TS user-agent and we have one place to control request behavior.
+ *
+ * Notes:
+ * - `accountId` is not required by SnapTrade for this call, but we include it so:
+ *   - callers can log/trace requests with account context, and
+ *   - the Java bridge can reuse its existing rate-limit bucketing keyed by accountId.
+ * - `waitToConfirm` maps to SnapTrade's `wait_to_confirm` (defaults true). Leaving this true
+ *   makes responses more likely to include a non-PENDING status at the cost of higher latency.
+ */
+export const equityTradeSchema = z.object({
+  accountId: z.string().uuid(),
+  userId: z.string().min(1),
+  userSecret: z.string().min(1),
+  tradeId: z.string().uuid(),
+  waitToConfirm: z.boolean().optional()
+});
+
+export type EquityTradePayload = z.infer<typeof equityTradeSchema>;

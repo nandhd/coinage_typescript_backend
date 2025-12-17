@@ -6,6 +6,9 @@ const tradingMocks = {
   getOrderImpact: mock(async () => {
     throw new Error("getOrderImpact mock not configured");
   }),
+  placeOrder: mock(async () => {
+    throw new Error("placeOrder mock not configured");
+  }),
   placeForceOrder: mock(async () => {
     throw new Error("placeForceOrder mock not configured");
   })
@@ -148,6 +151,64 @@ describe("equity routes", () => {
     expect(body).toEqual(responseBody);
     expect(res.headers.get("X-SnapTrade-Request-ID")).toBe("req-place");
     expect(tradingMocks.placeForceOrder.mock.calls.length).toBe(1);
+  });
+
+  it("runs checked-order trade placement and propagates headers", async () => {
+    /**
+     * This test covers the new internal endpoint used by the Java service to execute a checked trade
+     * by tradeId (SnapTrade: POST /trade/{tradeId}).
+     *
+     * Why it matters:
+     * - Automation (sell runs) and the manual "impact → place" flow can now share the exact same
+     *   checked-order execution path.
+     * - It ensures we propagate SnapTrade request-id + rate-limit headers which are critical for
+     *   debugging partner-side failures (support needs request-id).
+     */
+    const accountId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const responseBody = { brokerage_order_id: "bo-2", status: "EXECUTED" };
+
+    tradingMocks.placeOrder.mockImplementation(async (payload) => {
+      expect(payload.tradeId).toBe("139e307a-82f7-4402-b39e-4da7baa87758");
+      expect(payload.userId).toBe("snap-user");
+      expect(payload.userSecret).toBe("snap-secret");
+      expect(payload.wait_to_confirm).toBe(true);
+      return {
+        data: responseBody,
+        headers: {
+          get: (key: string) => {
+            const lower = key.toLowerCase();
+            if (lower === "x-request-id") return "req-trade";
+            if (lower === "x-ratelimit-remaining") return "50";
+            return undefined;
+          }
+        }
+      };
+    });
+
+    const app = createApp();
+    const res = await app.request("/equity/trade", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(env.COINAGE_TS_SHARED_SECRET ? { "X-Coinage-TS-Secret": env.COINAGE_TS_SHARED_SECRET } : {})
+      },
+      body: JSON.stringify({
+        accountId,
+        userId: "snap-user",
+        userSecret: "snap-secret",
+        tradeId: "139e307a-82f7-4402-b39e-4da7baa87758"
+      })
+    });
+
+    const body = await res.json();
+    if (res.status !== 200) {
+      console.error("trade error body", body);
+    }
+    expect(res.status).toBe(200);
+    expect(body).toEqual(responseBody);
+    expect(res.headers.get("X-SnapTrade-Request-ID")).toBe("req-trade");
+    expect(res.headers.get("X-SnapTrade-RateLimit-Remaining")).toBe("50");
+    expect(tradingMocks.placeOrder.mock.calls.length).toBe(1);
   });
 
   it("enforces shared secret when configured", async () => {

@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { ZodError, type ZodType } from "zod";
 import { snaptrade } from "../lib/snaptrade";
 import { env } from "../lib/env";
-import { equityOrderSchema, type EquityOrderPayload } from "../schemas/equity";
+import { equityOrderSchema, equityTradeSchema, type EquityOrderPayload, type EquityTradePayload } from "../schemas/equity";
 import { handleSnaptradeError, propagateRateLimitHeaders, unwrapSnaptradeResponse, validationError } from "../utils/snaptrade";
 
 /**
@@ -127,6 +127,69 @@ export function registerEquityRoutes(app: Hono) {
       return c.json(data);
     } catch (error) {
       logWarn("snaptrade.equity.place.error", { user, account, message: (error as Error)?.message });
+      return handleSnaptradeError(c, error);
+    }
+  });
+
+  // Checked-order placement endpoint (placeOrder by trade id).
+  app.post("/equity/trade", async (c) => {
+    /**
+     * This endpoint intentionally mirrors SnapTrade's "place checked order" call:
+     *   POST /trade/{tradeId}
+     *
+     * Contract expectations:
+     * - Input must include `tradeId` from a prior impact call (`/equity/impact`).
+     * - We require the shared secret (when configured) to keep this endpoint internal-only.
+     * - We propagate SnapTrade request-id + rate-limit headers back to the caller (Java service)
+     *   so downstream logs can correlate with SnapTrade support.
+     *
+     * Why we proxy this through TS:
+     * - The Java service previously executed checked trades using the Konfig Java SDK
+     *   which made SnapTrade logs show a Java user-agent.
+     * - Routing through this service ensures every SnapTrade trading request originates from
+     *   the TS SDK and keeps behavior consistent across manual and automation flows.
+     */
+    const payloadResult = await parseJsonBody<EquityTradePayload>(c, equityTradeSchema);
+    if (payloadResult instanceof Response) {
+      return payloadResult;
+    }
+    const payload = payloadResult;
+    const user = userSnippet(payload.userId);
+    const account = accountSnippet(payload.accountId);
+    logInfo("snaptrade.equity.trade.request", {
+      user,
+      account,
+      tradeId: payload.tradeId,
+      waitToConfirm: payload.waitToConfirm ?? true
+    });
+
+    try {
+      // `wait_to_confirm` defaults to true in the SnapTrade SDK; we make it explicit here so:
+      // - callers can override it when they need lower latency, and
+      // - logs reflect the effective behavior (helpful when debugging PENDING statuses).
+      const result = await snaptrade.trading.placeOrder({
+        tradeId: payload.tradeId,
+        userId: payload.userId,
+        userSecret: payload.userSecret,
+        wait_to_confirm: payload.waitToConfirm ?? true
+      });
+
+      // The TS SDK may return either a normalized `{ data, headers }` response or raw data depending
+      // on runtime/environment; unwrapSnaptradeResponse keeps route code consistent.
+      const { data, requestId, headers } = unwrapSnaptradeResponse(result);
+      propagateRequestId(c, requestId);
+      propagateRateLimitHeaders(c, headers);
+      logInfo("snaptrade.equity.trade.response", {
+        user,
+        account,
+        requestId,
+        brokerageOrderId: (data as any)?.brokerage_order_id ?? null,
+        status: (data as any)?.status ?? null
+      });
+      return c.json(data);
+    } catch (error) {
+      // Centralized error mapping keeps the response shape consistent with other routes.
+      logWarn("snaptrade.equity.trade.error", { user, account, message: (error as Error)?.message });
       return handleSnaptradeError(c, error);
     }
   });
