@@ -48,6 +48,9 @@ export function handleSnaptradeError(c: Context, error: unknown) {
 
     if (requestId) {
       c.header("X-SnapTrade-Request-ID", String(requestId));
+      // The Java backend expects `X-Request-ID` when mapping SnapTrade SDK errors (it uses this
+      // header name for both SDK and TS-bridge calls). Set both so logs/errors can correlate.
+      c.header("X-Request-ID", String(requestId));
     }
 
     const rateLimit = pickRateLimitHeaders(error.response?.headers);
@@ -65,16 +68,28 @@ export function handleSnaptradeError(c: Context, error: unknown) {
       c.header("Retry-After", String(retryAfter));
     }
 
-    return c.json(
-      {
-        error: "snaptrade_error",
-        message:
-          typeof error.response?.data === "string" ? error.response?.data : error.message,
-        details: typeof error.response?.data === "object" ? error.response?.data : undefined,
-        status
-      },
-      status
-    );
+    const data = error.response?.data;
+    // Important: the Java backend's SnaptradeErrorMapper expects SnapTrade's native error JSON
+    // shape (e.g., `{ code, detail, raw_error }`). Do not wrap object payloads, otherwise the
+    // mapper can't extract nested broker error codes and remediation URLs.
+    if (data && typeof data === "object") {
+      return c.json(data, status);
+    }
+    if (typeof data === "string") {
+      const trimmed = data.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (parsed && typeof parsed === "object") {
+            return c.json(parsed, status);
+          }
+        } catch {
+          // fall through to synthetic error payload
+        }
+      }
+      return c.json({ code: "SNAPTRADE_ERROR", detail: data }, status);
+    }
+    return c.json({ code: "SNAPTRADE_ERROR", detail: error.message }, status);
   }
 
   console.error("Unhandled SnapTrade error", error);

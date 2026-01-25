@@ -189,7 +189,16 @@ describe("crypto routes", () => {
       const error: any = new Error("snaptrade unavailable");
       error.response = {
         status: 503,
-        data: { error: "maintenance" },
+        data: {
+          code: "1119",
+          detail: "Order rejected by brokerage - https://sp.webull.com/agreement/third-party?bizTypes=TRADE_FRACT_PRO&secAccountId=26616805&hl=en",
+          raw_error: {
+            body: {
+              message: "https://sp.webull.com/agreement/third-party?bizTypes=TRADE_FRACT_PRO&secAccountId=26616805&hl=en",
+              error_code: "OAUTH_OPENAPI_OPENAPI_FRACT_VERSION2_ACCOUNT_NOT_TRADE"
+            }
+          }
+        },
         headers: { "x-request-id": "req-fail" }
       };
       throw error;
@@ -203,9 +212,10 @@ describe("crypto routes", () => {
 
     expect(res.status).toBe(503);
     const body = await res.json();
-    expect(body.error).toBe("snaptrade_error");
-    expect(body.status).toBe(503);
+    expect(body.code).toBe("1119");
+    expect(body.raw_error?.body?.error_code).toBe("OAUTH_OPENAPI_OPENAPI_FRACT_VERSION2_ACCOUNT_NOT_TRADE");
     expect(res.headers.get("X-SnapTrade-Request-ID")).toBe("req-fail");
+    expect(res.headers.get("X-Request-ID")).toBe("req-fail");
   });
 
   it("maps expiration_date to expiration_time in order payloads", async () => {
