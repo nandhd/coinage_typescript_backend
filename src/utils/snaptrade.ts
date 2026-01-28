@@ -42,6 +42,40 @@ export function validationError(c: Context, error: ZodError) {
  * and log unexpected failures for further triage.
  */
 export function handleSnaptradeError(c: Context, error: unknown) {
+  /**
+   * IMPORTANT CONTEXT (why this function exists):
+   *
+   * This TypeScript service is a "bridge" that calls SnapTrade using the TS SDK and returns the
+   * result to the Java backend. The Java backend then maps SnapTrade errors using `SnaptradeErrorMapper`,
+   * which expects SnapTrade's *native* error JSON (shape like `{ code, detail, raw_error }`).
+   *
+   * If we accidentally:
+   * - change the HTTP status code (e.g., turn a 400 into 500), or
+   * - wrap the error body in our own `{ error: ... }` envelope, or
+   * - drop the partner request id header (`x-request-id`),
+   *
+   * then the Java backend can no longer extract:
+   * - nested broker error codes (e.g., `raw_error.body.error_code`), and
+   * - remediation URLs (e.g., Webull agreement link),
+   *
+   * which directly breaks user-facing flows like the "Action needed: sign Webull agreement" email.
+   *
+   * A key nuance: SnapTrade's TS SDK errors are not always "Axios-like". In production we observed
+   * the SDK throwing a `SnaptradeError` instance that carries fields like:
+   *   - `status` / `statusCode`
+   *   - `headers`
+   *   - `responseBody`
+   *
+   * Our prior implementation only handled Axios-shaped errors (`error.response.status`, etc.).
+   * When the SDK threw `SnaptradeError`, we fell through to the generic 500 path and logged
+   * "Unhandled SnapTrade error", which caused the Java service to see a synthetic 500 and lose the
+   * original SnapTrade error payload and headers.
+   *
+   * The logic below therefore handles BOTH shapes:
+   * 1) Axios-like errors (legacy / some adapters),
+   * 2) SnapTrade SDK `SnaptradeError`-like errors (non-Axios), by returning the original
+   *    status + raw error JSON unmodified.
+   */
   if (isAxiosLikeError(error)) {
     const status = error.response?.status ?? 502;
     const requestId = readHeaderValue(error.response?.headers, "x-request-id");
@@ -92,6 +126,76 @@ export function handleSnaptradeError(c: Context, error: unknown) {
     return c.json({ code: "SNAPTRADE_ERROR", detail: error.message }, status);
   }
 
+  // Handle SnapTrade TS SDK errors that are *not* Axios-like.
+  //
+  // Why we need this branch:
+  // - The SnapTrade TS SDK (snaptrade-typescript-sdk) can throw a custom `SnaptradeError` class.
+  // - That class does NOT have `error.response`, so it bypasses the Axios branch above.
+  // - However, it still contains everything we need to preserve correctness:
+  //   - the upstream HTTP status code (often 400/401/403/429/etc),
+  //   - the SnapTrade request id header (x-request-id),
+  //   - rate limit headers (x-ratelimit-*),
+  //   - and most importantly the raw SnapTrade JSON body (code/detail/raw_error).
+  //
+  // If we fail to recognise it, we incorrectly return 500 here, and the Java backend can no longer
+  // map Webull agreement gates (because it never sees `raw_error.body.error_code`).
+  if (isSnaptradeSdkError(error)) {
+    // The SDK uses `status` in some versions and `statusCode` in others. Prefer `statusCode` if present.
+    const status =
+      (typeof error.statusCode === "number" && error.statusCode > 0 ? error.statusCode : undefined) ??
+      (typeof error.status === "number" && error.status > 0 ? error.status : undefined) ??
+      502;
+
+    // Header propagation: SnapTrade support/debug workflows rely heavily on x-request-id.
+    // We set BOTH X-SnapTrade-Request-ID and X-Request-ID because the Java bridge client reads
+    // X-Request-ID for correlation and mapping.
+    const requestId = readHeaderValue(error.headers, "x-request-id");
+    if (requestId) {
+      c.header("X-SnapTrade-Request-ID", String(requestId));
+      c.header("X-Request-ID", String(requestId));
+    }
+
+    // Propagate rate limit headers so the Java backend can observe/record remaining budget.
+    const rateLimit = pickRateLimitHeaders(error.headers);
+    if (rateLimit.limit) c.header("X-SnapTrade-RateLimit-Limit", rateLimit.limit);
+    if (rateLimit.remaining) c.header("X-SnapTrade-RateLimit-Remaining", rateLimit.remaining);
+    if (rateLimit.reset) c.header("X-SnapTrade-RateLimit-Reset", rateLimit.reset);
+
+    // Propagate Retry-After when present (important for 429 and backoff behaviour).
+    const retryAfter = readHeaderValue(error.headers, "retry-after");
+    if (retryAfter) c.header("Retry-After", String(retryAfter));
+
+    // SnapTrade's error payload may be an object or a JSON string. We must return it *as-is* (object),
+    // not wrapped, so the Java `SnaptradeErrorMapper` can parse:
+    // - `code` (often numeric string like "1119"),
+    // - `detail` (often includes remediation URL), and
+    // - `raw_error.body.error_code` (the real actionable broker code).
+    const body = error.responseBody;
+    if (body && typeof body === "object") {
+      return c.json(body, status);
+    }
+    if (typeof body === "string") {
+      const trimmed = body.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (parsed && typeof parsed === "object") {
+            return c.json(parsed, status);
+          }
+        } catch {
+          // fall through to string wrapper below
+        }
+      }
+      // If we received a non-JSON string, return it as `detail` so callers at least see the reason.
+      return c.json({ code: "SNAPTRADE_ERROR", detail: body }, status);
+    }
+
+    // Last resort: preserve status code, but use the error message as detail.
+    return c.json({ code: "SNAPTRADE_ERROR", detail: error.message }, status);
+  }
+
+  // Any other unknown error shape: log and return a synthetic 500.
+  // This path should be rare; if it becomes common we should expand the type guards above.
   console.error("Unhandled SnapTrade error", error);
   return c.json(
     {
@@ -136,6 +240,36 @@ function isAxiosLikeError(
   };
 } {
   return Boolean(error && typeof error === "object" && "message" in error && "response" in (error as any));
+}
+
+/**
+ * Type guard for SnapTrade TS SDK errors (e.g., `SnaptradeError`).
+ *
+ * We intentionally avoid importing the SDK's error class here because:
+ * - it would force this utility to be coupled to the SDK runtime module system, and
+ * - error classes can be duplicated across bundlers, making `instanceof` unreliable.
+ *
+ * Instead we detect by "shape":
+ * - `message` is present (string),
+ * - a numeric `status` or `statusCode` exists,
+ * - and `responseBody` exists (string or object) OR `headers` exists (for request-id propagation).
+ */
+function isSnaptradeSdkError(
+  error: unknown
+): error is {
+  message: string;
+  status?: number;
+  statusCode?: number;
+  responseBody?: unknown;
+  headers?: unknown;
+} {
+  if (!error || typeof error !== "object") return false;
+
+  const e = error as any;
+  const hasMessage = typeof e.message === "string";
+  const hasStatus = typeof e.status === "number" || typeof e.statusCode === "number";
+  const hasBodyOrHeaders = "responseBody" in e || "headers" in e;
+  return hasMessage && hasStatus && hasBodyOrHeaders;
 }
 
 /**
